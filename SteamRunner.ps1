@@ -66,6 +66,15 @@ Launch Options: -WindowStyle Hidden -ExecutionPolicy Bypass -Command "C:\SteamRu
 - Add Rockstar support.
 - Add Xbox/Microsoft Store support.
     - Can use URLs such as "shell:AppsFolder\Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe!App" to launch games from Steam, but will not inherit Steam Overlay/Steam Input/etc.
+
+# What's New
+ - Runner will now monitor for game to start rather than wait a fixed period of time only.
+    - Allows time for pre-launch tasks such as logging in or confirming cloud sync data.
+    - If game process is never found, runner will exit without closing launchers to avoid interrupting error messages or other diagnostics which may be presented to the user.
+ - Runner will now automatically prompt for administrator permission to close launcher processes if access is denied to the current user.
+ - Runner will now check for other instances of itself interacting with the same launcher before disassociating launcher processes from Steam.
+    - Allows running multiple programs from the same launcher (if launcher supports it).
+ - Minor code cleanup.
 #>
 
 <#
@@ -76,13 +85,13 @@ INITIALIZATION
 if ($args.Length -ne 3) {
     Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
     Write-Host "Incorrect number of arguments supplied!`n"
-    Write-Host "Usage: " -NoNewline -ForegroundColor DarkGray
-    Write-Host ".\$($MyInvocation.MyCommand) " -NoNewLine
+    Write-Host "Usage:"
+    Write-Host ".\$($MyInvocation.MyCommand) " -NoNewLine -ForegroundColor Gray
     Write-Host "Store " -NoNewLine -ForegroundColor Magenta
     Write-Host "Path " -NoNewLine -ForegroundColor Cyan
     Write-Host "GameName`n" -ForegroundColor Green
     Write-Host "See script notes for details on supported storefronts and specific usage of each`n"
-    Start-Sleep 3
+    Start-Sleep 7
     exit
 }
 
@@ -119,6 +128,20 @@ switch ($args[0].ToLower()) { # NOTE: Array order matters! FIFK - First In, Firs
     }
 }
 
+# Declare functions
+function Runner-IsDuplicate {
+    $isDuplicate = $false
+    $process = (Get-WmiObject Win32_Process -Filter "Name='$((Get-Process -Id $PID).ProcessName).exe'")
+    $process | ForEach-Object {
+        if ($_.CommandLine -like "*$($args[0])*") {
+            if ($_.ProcessId -ne $PID) {
+                $isDuplicate = $true
+            }
+        }
+    }
+    return $isDuplicate
+}
+
 
 <#
 LAUNCHER
@@ -126,9 +149,15 @@ LAUNCHER
 
 # Shut down existing launcher process, if any
 $process = (Get-Process $launchProcess 2>$null)
-if ($process -ne $null) {    
+if (($process -ne $null) -And (Runner-IsDuplicate -eq $false)) {    
     Write-Host "`nDetected running launcher instance. Restarting..." -ForegroundColor Yellow
-    Stop-Process $process
+    $result = @()
+    Stop-Process $process -ErrorAction SilentlyContinue -ErrorVariable result
+
+    # Elevate command, if necessary
+    if ($result.count -gt 0) {
+        Start-Process powershell -Verb RunAs -ArgumentList "-Command `"Stop-Process (Get-Process $($launchProcess -join ", ")) -Force`""
+    }
     Start-Sleep 1
 }
 
@@ -142,7 +171,7 @@ switch ($args[0].ToLower()) {
             } else {
                 $WOW64 = ""
             }
-            $BNPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE$($WOW64)\Blizzard Entertainment\Battle.net\Capabilities" -Name "ApplicationIcon").ApplicationIcon
+            $BNPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE$WOW64\Blizzard Entertainment\Battle.net\Capabilities" -Name "ApplicationIcon").ApplicationIcon
         } catch {
             Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
             Write-Host "Battle.net installation not found!`n"
@@ -159,7 +188,7 @@ switch ($args[0].ToLower()) {
             $EAPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Electronic Arts\EA Desktop\" -Name "LauncherAppPath").LauncherAppPath
         } catch {
             Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
-            Write-Host "EA Desktop installation not found! (Note that this script does not support Origin!)`n"
+            Write-Host "EA Desktop installation not found! (Note that Origin is not supported!)`n"
             Start-Sleep 3
             exit
         }
@@ -174,10 +203,10 @@ switch ($args[0].ToLower()) {
             } else {
                 $WOW64 = ""
             }
-            $GGPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE$($WOW64)\GOG.com\GalaxyClient\paths" -Name "client").client
+            $GGPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE$WOW64\GOG.com\GalaxyClient\paths" -Name "client").client
         } catch {
             Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
-            Write-Host "GOG Galaxy 2.0 installation not found! (Note that this script does not support 1.0!)`n"
+            Write-Host "GOG Galaxy 2.0 installation not found! (Note that 1.0 is not supported!)`n"
             Start-Sleep 3
             exit
         }
@@ -195,12 +224,28 @@ if ($gameArgs -ne $null) {
 } else {
     &Start-Process "$gamePath"
 }
-Start-Sleep 15
 
 
 <#
 MONITOR
 #>
+
+# Wait for launched game process
+for ($i = 0; $i -lt 3600; $i++) {
+    Start-Sleep 1
+    $process = (Get-Process $gameProcess 2>$null)
+    if ($process -ne $null) {
+        break
+    }
+}
+
+# End runner process if game process not found
+if ($process -eq $null) {
+    Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
+    Write-Host "Game process not found! Ending runner task...`n"
+    Start-Sleep 3
+    exit
+}
 
 # Monitor launched game process(es)
 while ($true) {
@@ -209,12 +254,14 @@ while ($true) {
 
     # Close launcher when game is closed (disassociates process from Steam)
     if ($process -eq $null) {
-        Write-Host "`nGame ended. " -NoNewline -ForegroundColor Cyan 
-        Write-Host "Waiting for cloud sync to exit...`n"
-        Start-Sleep 10
-        $process = (Get-Process $launchProcess 2>$null)
-        if ($process -ne $null) {
-            Stop-Process $process
+        if (Runner-IsDuplicate -eq $false) {
+            Write-Host "`nGame ended. " -NoNewline -ForegroundColor Cyan 
+            Write-Host "Waiting for cloud sync to exit...`n"
+            Start-Sleep 12
+            $process = (Get-Process $launchProcess 2>$null)
+            if ($process -ne $null) {
+                Stop-Process $process
+            }
         }
         break
     }
