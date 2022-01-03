@@ -128,28 +128,25 @@ switch ($args[0].ToLower()) { # NOTE: Array order matters! FIFK - First In, Firs
     }
 }
 
-# Declare functions
-function Runner-IsDuplicate {
-    $isDuplicate = $false
-    $process = (Get-WmiObject Win32_Process -Filter "Name='$((Get-Process -Id $PID).ProcessName).exe'")
-    $process | ForEach-Object {
-        if ($_.CommandLine -like "*$($args[0])*") {
-            if ($_.ProcessId -ne $PID) {
-                $isDuplicate = $true
-            }
-        }
-    }
-    return $isDuplicate
-}
-
 
 <#
 LAUNCHER
 #>
 
+# Check for duplicate runners
+$isDuplicate = $false
+$process = (Get-WmiObject Win32_Process -Filter "Name='$((Get-Process -Id $PID).ProcessName).exe'")
+$process | ForEach-Object {
+    if ($_.CommandLine -like "*$($args[0])*") {
+        if ($_.ProcessId -ne $PID) {
+            $isDuplicate = $true
+        }
+    }
+}
+
 # Shut down existing launcher process, if any
 $process = (Get-Process $launchProcess 2>$null)
-if (($process -ne $null) -And (Runner-IsDuplicate -eq $false)) {    
+if (($process -ne $null) -And (!$isDuplicate)) {    
     Write-Host "`nDetected running launcher instance. Restarting..." -ForegroundColor Yellow
     $result = @()
     Stop-Process $process -ErrorAction SilentlyContinue -ErrorVariable result
@@ -254,7 +251,19 @@ while ($true) {
 
     # Close launcher when game is closed (disassociates process from Steam)
     if ($process -eq $null) {
-        if (Runner-IsDuplicate -eq $false) {
+        # Check for duplicate runners
+        $isDuplicate = $false
+        $process = (Get-WmiObject Win32_Process -Filter "Name='$((Get-Process -Id $PID).ProcessName).exe'")
+        $process | ForEach-Object {
+            if ($_.CommandLine -like "*$($args[0])*") {
+                if ($_.ProcessId -ne $PID) {
+                    $isDuplicate = $true
+                }
+            }
+        }
+
+        # Close launcher if not used by other runner processes
+        if (!$isDuplicate) {
             Write-Host "`nGame ended. " -NoNewline -ForegroundColor Cyan 
             Write-Host "Waiting for cloud sync to exit...`n"
             Start-Sleep 12
