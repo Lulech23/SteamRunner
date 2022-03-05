@@ -61,8 +61,7 @@ Uses paths to a **root directory only**, not to executables. (Executables are ob
 Despite rebranding to "Ubisoft Connect", Ubisoft's platform is still internally referred to as "Uplay", so that's how it's referred to by SteamRunner.
 
 # To-Do
-* Add Bethesda support.
-* Add Rockstar support.
+* Add R\* launcher support.
 * Add Xbox/Microsoft Store support.
     * Can use URLs such as `shell:AppsFolder\Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe!App` to launch games from Steam, but will not inherit Steam Overlay/Steam Input/etc.
 
