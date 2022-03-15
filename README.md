@@ -16,7 +16,7 @@ SteamRunner manages the execution of games added to Steam from third-party libra
 # How to use
 As SteamRunner is written in PowerShell, it can be operated in one of two ways: as a PowerShell script, or as a compiled EXE with [PS2EXE](https://github.com/MScholtes/PS2EXE) (recommended). As the former comes with a number of additional quirks, this guide will only cover the latter. Advanced users may view PowerShell usage details within the script file itself.
 
-> **Important:** SteamRunner assumes you are already signed in to each platform before starting a game. If you are signed out, SteamRunner will likely detect the target game as not running and exit prematurely. Make sure all platforms are signed in before proceeding.
+> **Important:** SteamRunner assumes you are already signed in to each platform before starting a game. If you are signed out, SteamRunner will likely open the launcher, but fail to launch the selected game. Make sure all platforms are signed in before proceeding.
 
 1. Download and extract the latest version of SteamRunner from [releases](https://github.com/Lulech23/SteamRunner/releases/latest)
 2. Create a new shortcut in Steam via the **Games** \> **Add a Non-Steam Game to My Library...** menu. The actual subject of the shortcut doesn't matter, since it must be modified anyway. However, because the menu does not allow for importing the same item multiple times, you must select any application *besides* SteamRunner.
@@ -26,12 +26,14 @@ As SteamRunner is written in PowerShell, it can be operated in one of two ways: 
 6. Set the shortcut **start in** directory to the root directory of your game.
 7. Set the shortcut **launch options** according to the following syntax:
 
-> `Store` `Path` `GameName`
+> `Store` `Path` `GameName` `["admin"]`
 
 ## Runner Parameters
 The exact values represented by the syntax above varies slightly depending on which storefront your game is launching from (see details below).
 
 In addition, note that the `GameName` parameter is a **filter** which tells SteamRunner which process(es) to monitor. Multiple processes can be matched by using a wildcard (`*`) or pipe separator (`|`). For example, in the Kingdom Hearts HD collection, there are separate executables for each game in the collection, plus a loading screen application to hide transitions between each. Rather than name all 7+ executables manually, we can match them programmatically with just `"KINGDOM HEARTS*|WaitTitleProject"`. This will match any processes starting with the words "KINGDOM HEARTS", and also the exact process "WaitTitleProject". `GameName` filters should **not** have an extension (e.g. `.exe`).
+
+Finally, games which require account elevation (e.g. for anti-cheat) can have a fourth parameter added, `"admin"`. If this string is present after `GameName`, SteamRunner will relaunch Steam as an administrator. You can then launch the game again and proceed. When the game exits, SteamRunner will then restore Steam to running as a standard user again.
 
 ### Battle.net
 > `BattleNet "C:\Program Files (x86)\Overwatch\_retail_\Overwatch.exe" "Overwatch"`
@@ -41,19 +43,21 @@ Store name must be input as "BattleNet" **without** a dot. If applicable, use th
 ### EA Desktop
 > `EA "C:\Program Files (x86)\EA Games\Mass Effect Legendary Edition\Game\MassEffectLauncher.exe" "MassEffect*"`
 
-Supports EA Desktop **only**, not Origin. If you see a warning that EABackgroundService.exe could not be closed, you will have to restart and exit the current running instance of EA Desktop manually.
+Supports EA Desktop **only**, not Origin. 
+
+If you see a warning that EABackgroundService.exe could not be closed, you will have to exit the current running instance of EA Desktop manually so that SteamRunner can launch its own attached process.
 
 ### Epic Games
 > `Epic "com.epicgames.launcher://apps/68c214c58f694ae88c2dab6f209b43e4?action=launch&silent=true" "KINGDOM HEARTS*|WaitTitleProject"`
 
-Uses URLs instead of executable paths. URLs have the format `com.epicgames.launcher://apps/{AppName}?action=launch&silent=true`, where `AppName` can be obtained from `%PROGRAMDATA%\Epic\EpicGamesLauncher\Data\Manifests` (open manifests with your preferred text editor). Alternatively, create a desktop shortcut from the Epic Games store and copy the URL from the shortcut properties.
+Uses URLs instead of executable paths. URLs have the format `com.epicgames.launcher://apps/{AppName}?action=launch&silent=true`, where `AppName` can be obtained from `%PROGRAMDATA%\Epic\EpicGamesLauncher\Data\Manifests` (open manifests with your preferred text editor). Alternatively, create a desktop shortcut from the Epic Games store and copy the URL from the shortcut properties. URLs **must** be enclosed in quotes.
 
-URLs **must** be enclosed in quotes.
+Note that when exiting a game, Steam will temporarily show the launched title as still running. Although "QUIT" is displayed, *do not press it*. Simply wait for cloud syncing to complete in the background and the game will exit normally.
 
 ### GOG Galaxy
 > `GOG "C:\Program Files (x86)\GOG Galaxy\Games\SWAT 4" "Swat4"`
 
-Uses paths to a **root directory only**, not to executables. (Executables are obtained from game IDs which are handled by SteamRunner and GOG Galaxy themselves.) `GameName` must still match the executable name, not the root directory name.
+Uses paths to a game **root directory only**, not to an executable. (Executables are obtained from game IDs which are handled by SteamRunner and GOG Galaxy themselves.) `GameName` must still match the executable name(s), not the root directory name.
 
 ### Uplay/Ubisoft Connect
 > `Uplay "C:\Program Files (x86)\Ubisoft\Assassin's Creed 1\AssassinsCreed_Game.exe" "Assassins*"`
@@ -61,8 +65,7 @@ Uses paths to a **root directory only**, not to executables. (Executables are ob
 Despite rebranding to "Ubisoft Connect", Ubisoft's platform is still internally referred to as "Uplay", so that's how it's referred to by SteamRunner.
 
 # To-Do
-* Add admin support (for multiplayer games with anti-cheat, etc).
-* Add R\* launcher support.
+* Add Rockstar Launcher support.
 * Add Xbox/Microsoft Store support.
     * Can use URLs such as `shell:AppsFolder\Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe!App` to launch games from Steam, but will not inherit Steam Overlay/Steam Input/etc.
 

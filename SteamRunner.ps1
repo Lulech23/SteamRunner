@@ -11,7 +11,7 @@ Supported launchers include: `BattleNet`, `EA`, `Epic`, `GOG`, `Uplay`
 
 # Usage Info
 ## Basic Syntax
-.\SteamRunner.ps1 Store Path GameName
+.\SteamRunner.ps1 Store Path GameName [Admin]
 
 ## Example Steam Shortcut:
 Target: "C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -26,12 +26,13 @@ Launch Options: -WindowStyle Hidden -ExecutionPolicy Bypass -Command "C:\SteamRu
     - Relaunch Steam as an administrator to bypass this limitation.
 - To include quotes within quotes in Steam shortcuts, escape inner quotes with a backslash (\).
     - This is different from standard PowerShell convention, which uses backticks (`) as an escape character instead.
+- For games that require account elevation (e.g. multiplayer games with anti-cheat) include "admin" after the game name string. This will restart Steam as an administrator if necessary (game will require relaunch).
 
 ## PowerShell:
 - PowerShell scripts must be enabled on your system for SteamRunner to work!
     - Prepend shortcut arguments with `-ExecutionPolicy Bypass` to temporarily enable PowerShell scripts.
 - Prepend shortcut arguments with `-WindowStyle Hidden` to hide the PowerShell window during execution.
-    - It is recommended to test shortcuts first, as this will also hide error output, if any.
+    - It is recommended to test shortcuts first, as hiding the window will also hide error output, if any.
 - `Path` and `GameName` must be enclosed in quotes if they contain spaces or special characters.
 
 # Launcher Info
@@ -62,34 +63,59 @@ Launch Options: -WindowStyle Hidden -ExecutionPolicy Bypass -Command "C:\SteamRu
 - Still referenced internally as "Uplay" despite the brand change to "Ubisoft Connect".
 
 # To-do
-- Add Bethesda support.
-- Add Rockstar support.
+- Add Rockstar Launcher support.
 - Add Xbox/Microsoft Store support.
     - Can use URLs such as "shell:AppsFolder\Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe!App" to launch games from Steam, but will not inherit Steam Overlay/Steam Input/etc.
 
 # What's New
- - Runner will now monitor for game to start rather than wait a fixed period of time only.
-    - Allows time for pre-launch tasks such as logging in or confirming cloud sync data.
-    - If game process is never found, runner will exit without closing launchers to avoid interrupting error messages or other diagnostics which may be presented to the user.
- - Runner will now automatically prompt for administrator permission to close launcher processes if access is denied to the current user.
- - Runner will now check for other instances of itself interacting with the same launcher before disassociating launcher processes from Steam.
-    - Allows running multiple programs from the same launcher (if launcher supports it).
- - Minor code cleanup.
+ - Added admin parameter to SteamRunner for games that require account elevation
+ - Fixed runner occasionally failing to launch games on Windows 11
 #>
+
+<#
+ELEVATION
+#>
+
+# Get Steam executable path
+$SteamPath = ((Get-ItemProperty -Path "HKCU:\Software\Valve\Steam\" -Name "SteamExe").SteamExe -replace "/", "\")
+
+# Check privileges
+$gameAdmin = $false
+$isAdmin = ([Security.Principal.WindowsIdentity]::GetCurrent().Groups -contains 'S-1-5-32-544')
+if ($args[3] -ne $null) {
+    $gameAdmin = ($args[3].ToLower() -eq "admin")
+
+    # Restart Steam as Admin, if requested
+    if ($gameAdmin -and (!$isAdmin)) {
+        Write-Host "`nRequested account elevation. Restarting..." -ForegroundColor Yellow
+        $process = $null
+
+        # Create separate instance to relaunch process
+        cmd /c start "SR Helper" /b powershell.exe -ExecutionPolicy Bypass -Command (
+            "`$process = (Get-Process 'steam*' 2>`$null);" + 
+            "Stop-Process `$process -Force;" + 
+            "Start-Sleep 2;" + 
+            "Start-Process '$SteamPath' -Verb RunAs"
+        )
+        exit
+    }
+}
+
 
 <#
 INITIALIZATION
 #>
 
 # Validate arguments
-if ($args.Length -ne 3) {
+if ($args.Length -lt 3) {
     Write-Host "`nERROR: " -NoNewline -ForegroundColor Red
     Write-Host "Incorrect number of arguments supplied!`n"
     Write-Host "Usage:"
-    Write-Host ".\$($MyInvocation.MyCommand) " -NoNewLine -ForegroundColor Gray
+    Write-Host ".\$($MyInvocation.MyCommand) " -NoNewLine -ForegroundColor Yellow
     Write-Host "Store " -NoNewLine -ForegroundColor Magenta
     Write-Host "Path " -NoNewLine -ForegroundColor Cyan
-    Write-Host "GameName`n" -ForegroundColor Green
+    Write-Host "GameName " -NoNewLine -ForegroundColor Green
+    Write-Host "[Admin]`n" -ForegroundColor Gray
     Write-Host "See script notes for details on supported storefronts and specific usage of each`n"
     Start-Sleep 7
     exit
@@ -99,6 +125,7 @@ if ($args.Length -ne 3) {
 $gamePath = $args[1]
 $gameArgs = $null
 $gameProcess = $args[2].Split("|")
+$gameAdmin = $false
 switch ($args[0].ToLower()) { # NOTE: Array order matters! FIFK - First In, First Killed
     "battlenet" {
         $launchProcess = @("Battle.net")
@@ -132,31 +159,6 @@ switch ($args[0].ToLower()) { # NOTE: Array order matters! FIFK - First In, Firs
 <#
 LAUNCHER
 #>
-
-# Check for duplicate runners
-$isDuplicate = $false
-$process = (Get-WmiObject Win32_Process -Filter "Name='$((Get-Process -Id $PID).ProcessName).exe'")
-$process | ForEach-Object {
-    if ($_.CommandLine -like "*$($args[0])*") {
-        if ($_.ProcessId -ne $PID) {
-            $isDuplicate = $true
-        }
-    }
-}
-
-# Shut down existing launcher process, if any
-$process = (Get-Process $launchProcess 2>$null)
-if (($process -ne $null) -And (!$isDuplicate)) {    
-    Write-Host "`nDetected running launcher instance. Restarting..." -ForegroundColor Yellow
-    $result = @()
-    Stop-Process $process -ErrorAction SilentlyContinue -ErrorVariable result
-
-    # Elevate command, if necessary
-    if ($result.count -gt 0) {
-        Start-Process powershell -Verb RunAs -ArgumentList "-Command `"Stop-Process (Get-Process $($launchProcess -join ", ")) -Force`""
-    }
-    Start-Sleep 1
-}
 
 # Restart launcher, if necessary 
 switch ($args[0].ToLower()) {
@@ -270,6 +272,20 @@ while ($true) {
             $process = (Get-Process $launchProcess 2>$null)
             if ($process -ne $null) {
                 Stop-Process $process
+            }
+
+            # Restart Steam as User, if elevated
+            if ($isAdmin) {
+                Write-Host "`nResetting account elevation..." -ForegroundColor Yellow
+                $process = $null
+
+                # Create separate instance to relaunch process
+                cmd /c start "SR Helper" /b powershell.exe -ExecutionPolicy Bypass -Command (
+                    "`$process = (Get-Process 'steam*' 2>`$null);" + 
+                    "Stop-Process `$process -Force;" + 
+                    "Start-Sleep 2;" + 
+                    "Start-Process '$SteamPath'"
+                )
             }
         }
         break
